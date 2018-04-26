@@ -76,10 +76,12 @@ $SPEC{diff_two_module_version_hash} = {
         %args_module_spec,
         hash_name => {
             summary => 'Hash name to be found in module namespace, with sigil',
-            schema => ['str*', match=>qr/\A[%$]\w+\z/],
+            schema => ['str*', match=>qr/\A[%\$]\w+\z/],
+            req => 1,
+            pos => 1,
         },
     },
-
+    'cmdline.skip_format' => 1,
     examples => [
         {
             argv => ['Foo::Bar', '%hash'],
@@ -100,38 +102,73 @@ sub diff_two_module_version_hash {
 
     my $mod = $args{module};
     _load_first_module(\%args);
+    my $version1 = ${"$mod\::VERSION"} // 'dev';
 
     my $hash1;
-    if ($args{hashname} =~ /\A%(.+)/) {
+    if ($args{hash_name} =~ /\A%(.+)/) {
         $hash1 = { %{"$mod\::$1"} };
         %{"$mod\::$1"} = ();
-    } elsif ($args{hashname} =~ /\A\$(.+)/) {
+    } elsif ($args{hash_name} =~ /\A\$(.+)/) {
         $hash1 = ${"$mod\::$1"};
         die "\$$mod\::$1 is not a hashref" unless ref $hash1 eq 'HASH';
         $hash1 = {%$hash1};
         %{ ${"$mod\::$1"} } = ();
     } else {
-        die "Invalid hashname $args{hashname}, must be '\%foo' or '\$foo'";
+        die "Invalid hash name $args{hash_name}, must be '\%foo' or '\$foo'";
     }
 
+    undef ${"$mod\::VERSION"};
     _load_second_module(\%args);
+    my $version2 = ${"$mod\::VERSION"} // 'dev';
 
     my $hash2;
-    if ($args{hashname} =~ /\A%(.+)/) {
+    if ($args{hash_name} =~ /\A%(.+)/) {
         $hash2 = { %{"$mod\::$1"} };
         %{"$mod\::$1"} = ();
-    } elsif ($args{hashname} =~ /\A\$(.+)/) {
+    } elsif ($args{hash_name} =~ /\A\$(.+)/) {
         $hash2 = ${"$mod\::$1"};
         die "\$$mod\::$1 is not a hashref" unless ref $hash2 eq 'HASH';
         $hash2 = {%$hash2};
         %{ ${"$mod\::$1"} } = ();
     } else {
-        die "Invalid hashname $args{hashname}, must be '\%foo' or '\$foo'";
+        die "Invalid hash name $args{hash_name}, must be '\%foo' or '\$foo'";
     }
 
-    use DD; dd {hash1=>$hash1, hash2=>$hash2};
+    my ($label1, $label2);
+    if ($version1 ne $version2) {
+        $label1 = "$mod version $version1";
+        $label2 = "$mod version $version2";
+    } else {
+        $label1 = "first version of $mod";
+        $label2 = "second version of $mod";
+    }
 
-    [200];
+    my @res;
+
+    push @res, "Keys only in ${label1}'s hash:\n";
+    for my $k (sort keys %$hash1) {
+        next if exists $hash2->{$k};
+        push @res, "  $k\n";
+    }
+    push @res, "\n";
+
+    push @res, "Keys only in ${label2}'s hash:\n";
+    for my $k (sort keys %$hash2) {
+        next if exists $hash1->{$k};
+        push @res, "  $k\n";
+    }
+    push @res, "\n";
+
+    push @res, "Keys where the values change:\n";
+    for my $k (sort keys %$hash2) {
+        next unless exists $hash1->{$k};
+        my $v1 = $hash1->{$k} // '';
+        my $v2 = $hash2->{$k} // '';
+        next if $v1 eq $v2;
+        push @res, "  $k ($v1 -> $v2)\n";
+    }
+
+    [200, "OK", join("", @res), {'cmdline.skip_format'=>1}];
 }
 
 1;
